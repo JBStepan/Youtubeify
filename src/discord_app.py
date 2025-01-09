@@ -1,6 +1,13 @@
 import discord
+import os
+from dotenv import load_dotenv
+import requests
 import datetime
 
+load_dotenv()
+bot = discord.Bot()
+
+# Embeds
 def download_added(playlist, user):
     return discord.Embed(
         title="Added playlist to queue",
@@ -24,3 +31,10 @@ def download_error(size, user):
         timestamp=datetime.datetime.now(),
         color=discord.Color.dark_red(),
     )
+
+@bot.event
+async def on_ready():
+    print(f"Bot ready!")
+
+def run_bot():
+    bot.run(os.getenv('TOKEN'))
