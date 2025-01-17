@@ -3,8 +3,10 @@ import os
 from dotenv import load_dotenv
 import requests
 import datetime
+import data
 
 load_dotenv()
+DB = data.get_db("discord")
 bot = discord.Bot()
 
 # Embeds
@@ -35,6 +37,10 @@ def download_error(size, user):
 @bot.event
 async def on_ready():
     print(f"Bot ready!")
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    pass
 
 def run_bot():
     bot.run(os.getenv('TOKEN'))

@@ -1,4 +1,3 @@
-from flask import Flask, Response, request, jsonify
 import yt_dlp
 import os
 import random
@@ -6,13 +5,14 @@ import string
 import threading
 import zipfile
 import io
+from flask import Flask, Response, request, jsonify
 from werkzeug.wsgi import FileWrapper
 from dotenv import load_dotenv
-from data import task_progress, finished_tasks
+import data
 
 load_dotenv()
+DB = data.get_db("backend")
 
-# Grabs the infomation of the playlist
 def get_playlist_info(playlist_url):
 
     opts = {
@@ -29,13 +29,15 @@ def get_playlist_info(playlist_url):
         'url': playlist_url
     }
 
-def task_runner(url, taskid):
+def task_runner(url, taskid, download_path=""):
     def progress_hook(d):
         if d['status'] == 'finished':
-            task_progress[taskid]['finished'] += 1
+            DB['tasks'].update_one(
+                { "id": taskid }, 
+                { '$inc': { "finished": 1 }}
+            )
 
     try:
-        # YT-DLP options
         ydl_opts = {
             'progress_hooks': [progress_hook],
             "quiet": True,
@@ -47,18 +49,18 @@ def task_runner(url, taskid):
                     'preferredquality': '256',
                 },
                 {
-                    'key': 'FFmpegMetadata',  # Embed metadata into audio
+                    'key': 'FFmpegMetadata',  
                     'add_metadata': True
                 },
                 {
-                    'key': 'EmbedThumbnail',  # Embed thumbnail into MP3
+                    'key': 'EmbedThumbnail',  
                     'already_have_thumbnail': False
                 }
             ],
-            'writethumbnail': True,  # Download thumbnails
-            'writeinfojson': False,  # Save metadata in JSON
+            'writethumbnail': True,  
+            'writeinfojson': False,  
             'outtmpl': os.path.join(f"downloads/{taskid}", '%(uploader)s - %(title)s.%(ext)s'),
-            'playlist_items': '1-',  # Download all items in the playlist
+            'playlist_items': '1-',  
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -66,9 +68,9 @@ def task_runner(url, taskid):
     except Exception as e:
         print(e)
     finally:
-        finished_tasks[taskid] = task_progress[taskid]
-        finished_tasks[taskid]['done'] == True
-        task_progress.pop(taskid)
+        DB['finished_tasks'].insert_one(DB['tasks'].find_one({ "id": taskid }))
+        DB['finished_tasks'].update_one({ "id": taskid }, { "$set": { "done": True, "download_url": f"http://127.0.0.1:6969/download/{taskid}.zip" } })
+        DB['tasks'].delete_one({ "id": taskid })
 
 def make_zipfile(taskid):
     data = io.BytesIO()
@@ -77,7 +79,7 @@ def make_zipfile(taskid):
 
     with zipfile.ZipFile(data, mode="w") as z:
         for f in files:
-            z.write(f"downloads/{taskid}/{f}")
+            z.write(f"downloads/{taskid}/{f}", f)
 
     data.seek(0)
     
@@ -96,7 +98,15 @@ def add_task():
 
     taskid = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
     playlist_info = get_playlist_info(playlist)
-    task_progress[taskid] = { 'url': playlist_info['url'], 'count': playlist_info['count'], 'finished': 0, 'title': playlist_info['title'], 'done': False }
+    DB["tasks"].insert_one({ 
+        "id": taskid, 
+        "url": playlist_info['url'], 
+        "count": playlist_info['count'], 
+        "finished": 0, 
+        "title": playlist_info['title'], 
+        "uploader": playlist_info['uploader'], 
+        "done": False 
+    })
 
     threading.Thread(target=task_runner, args=(playlist, taskid)).start()
 
@@ -104,12 +114,23 @@ def add_task():
 
 @app.route('/status/<string:task>', methods=["GET"])
 def get_task(task):
-    if finished_tasks.get(task) != None:
-        return jsonify({ "status": "success", "message": finished_tasks[task] }), 200
-    elif task_progress.get(task) == None:
+
+    count_fin = DB['finished_tasks'].count_documents({ "id": task })
+    count_act = DB['tasks'].count_documents({ "id": task })
+
+    if count_fin != 0:
+        doc = DB['finished_tasks'].find_one({ "id": task})
+        return jsonify({ "status": "success", "message": doc }), 200
+    elif count_act == 0:
         return jsonify({ "status": "error", "message": f"No task was found with the task id of {task}" }), 400 
 
-    return jsonify({ "status": "success", "message": task_progress[task] }), 200
+    doc = DB['tasks'].find_one({ "id": task})
+
+    return jsonify({ "status": "success", "message": doc }), 200
+
+@app.route("/status", methods=["GET"])
+def get_all_tasks():
+    pass
 
 @app.route("/download/<string:task>.zip", methods=["GET"])
 def download(task):
@@ -130,4 +151,4 @@ def download(task):
 def run_backend():
     os.makedirs("downloads", exist_ok=True)
 
-    app.run(host='0.0.0.0', port=os.getenv("BACKEND_PORT"))
+    app.run(host='0.0.0.0', port=6969)
