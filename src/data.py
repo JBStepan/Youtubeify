@@ -1,6 +1,11 @@
 from pymongo import MongoClient
+import os
+import dotenv
 
-CONNECTION_STRING = "mongodb://localhost:27017/"
+dotenv.load_dotenv()
+
+#
+CONNECTION_STRING = os.getenv("MONGODB_CONNECTION")
 CLIENT = MongoClient(CONNECTION_STRING)
 
 def get_db(dbname: str):

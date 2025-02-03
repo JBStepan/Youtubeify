@@ -1,12 +1,10 @@
-import asyncio
-from backend import run_backend
-from discord_app import run_bot
+import subprocess
 
-async def main():
-    backend_task = asyncio.create_task(run_backend())
-    discord_task = asyncio.create_task(asyncio.to_thread(run_bot()))
+backend_cmd = "gunicorn -w 2 -b 0.0.0.0:6969 backend:app"
+frontend_cmd = "gunicorn -w 2 -b 0.0.0.0:8080 frontend:app"
 
-    await asyncio.gather(backend_task, discord_task)
+bkpro = subprocess.Popen(backend_cmd, shell=True)
+frpro = subprocess.Popen(frontend_cmd, shell=True)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+bkpro.wait()
+frpro.wait()

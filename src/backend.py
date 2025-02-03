@@ -8,10 +8,13 @@ import io
 from flask import Flask, Response, request, jsonify
 from werkzeug.wsgi import FileWrapper
 from dotenv import load_dotenv
-import data
+from data import get_db
+from datetime import datetime
+from bson import json_util
+from json import loads
 
 load_dotenv()
-DB = data.get_db("backend")
+DB = get_db("backend")
 
 def get_playlist_info(playlist_url):
 
@@ -29,13 +32,24 @@ def get_playlist_info(playlist_url):
         'url': playlist_url
     }
 
-def task_runner(url, taskid, download_path=""):
+def task_runner(url, taskid, download_path="", no_folder=False, no_url=False, base_url=""):
     def progress_hook(d):
         if d['status'] == 'finished':
             DB['tasks'].update_one(
                 { "id": taskid }, 
                 { '$inc': { "finished": 1 }}
             )
+
+    path = ""
+    if download_path == "" and no_folder == False:
+        path = os.path.join(f"/downloads/{taskid}", '%(uploader)s - %(title)s.%(ext)s')
+    elif no_folder == True:
+        path = os.path.join(f"/downloads/", '%(uploader)s - %(title)s.%(ext)s')
+    elif download_path:
+        if no_folder == False:
+            path = os.path.join(f"{download_path}/{taskid}", '%(uploader)s - %(title)s.%(ext)s')
+        else:
+            path = os.path.join(f"{download_path}", '%(uploader)s - %(title)s.%(ext)s')
 
     try:
         ydl_opts = {
@@ -59,7 +73,7 @@ def task_runner(url, taskid, download_path=""):
             ],
             'writethumbnail': True,  
             'writeinfojson': False,  
-            'outtmpl': os.path.join(f"downloads/{taskid}", '%(uploader)s - %(title)s.%(ext)s'),
+            'outtmpl': path,
             'playlist_items': '1-',  
         }
 
@@ -69,17 +83,33 @@ def task_runner(url, taskid, download_path=""):
         print(e)
     finally:
         DB['finished_tasks'].insert_one(DB['tasks'].find_one({ "id": taskid }))
-        DB['finished_tasks'].update_one({ "id": taskid }, { "$set": { "done": True, "download_url": f"http://127.0.0.1:6969/download/{taskid}.zip" } })
+        if no_url == True:
+            DB['finished_tasks'].update_one(
+            { "id": taskid }, 
+            { "$set": 
+                { "done": True, 
+                  "done_at": datetime.now()
+                } 
+            })
+        else:
+            DB['finished_tasks'].update_one(
+            { "id": taskid }, 
+            { "$set": 
+                { "done": True, 
+                  "download_url": f"{base_url}/download/{taskid}.zip",
+                  "done_at": datetime.now()
+                } 
+            })
         DB['tasks'].delete_one({ "id": taskid })
 
-def make_zipfile(taskid):
+def make_zipfile(taskid, download_path = "downloads"):
     data = io.BytesIO()
 
-    files = os.listdir(f"downloads/{taskid}")
+    files = os.listdir(f"/{download_path}/{taskid}")
 
     with zipfile.ZipFile(data, mode="w") as z:
         for f in files:
-            z.write(f"downloads/{taskid}/{f}", f)
+            z.write(f"/{download_path}/{taskid}/{f}", f)
 
     data.seek(0)
     
@@ -91,7 +121,13 @@ app = Flask(__name__)
 @app.route('/add_download', methods=["POST"])
 def add_task():
     data = request.get_json()
-    playlist = data.get('url')
+
+    playlist = data.get("url")
+    download_path = data.get("download_path", "")
+    no_folder = data.get("no_folder", False)
+    no_url = data.get("no_url", False)
+
+    base_url = request.host_url
 
     if playlist == None:
         return jsonify({ "status": "error", "message": "No URL was provided" }), 400
@@ -105,10 +141,16 @@ def add_task():
         "finished": 0, 
         "title": playlist_info['title'], 
         "uploader": playlist_info['uploader'], 
-        "done": False 
+        "done": False,
+        "created_at": datetime.now()
     })
 
-    threading.Thread(target=task_runner, args=(playlist, taskid)).start()
+    threading.Thread(target=task_runner, args=(playlist, 
+                                               taskid, 
+                                               download_path, 
+                                               no_folder, 
+                                               no_url, 
+                                               base_url), name=taskid).start()
 
     return jsonify({ 'status': 'success', 'message': taskid}), 200
 
@@ -119,25 +161,33 @@ def get_task(task):
     count_act = DB['tasks'].count_documents({ "id": task })
 
     if count_fin != 0:
-        doc = DB['finished_tasks'].find_one({ "id": task})
-        return jsonify({ "status": "success", "message": doc }), 200
+        doc = DB['finished_tasks'].find({ "id": task }, { "_id": 0 })
+        return jsonify({ "status": "success", "message": loads(json_util.dumps(doc))}), 200
     elif count_act == 0:
         return jsonify({ "status": "error", "message": f"No task was found with the task id of {task}" }), 400 
 
-    doc = DB['tasks'].find_one({ "id": task})
+    doc = DB['tasks'].find({ "id": task}, { "_id": 0 })
 
-    return jsonify({ "status": "success", "message": doc }), 200
+    return jsonify({ "status": "success", "message": loads(json_util.dumps(doc)) }), 200
 
 @app.route("/status", methods=["GET"])
 def get_all_tasks():
-    pass
+    docs = list(DB["tasks"].find({}, { "_id": 0}))
+
+    print(docs)
+
+    if docs.__len__() == 0:
+        return jsonify({ "status": "error", "message": "There are no tasks in the queue"}), 400
+    
+    return jsonify({ "status": "success", "message": loads(json_util.dumps(docs)) })
+
 
 @app.route("/download/<string:task>.zip", methods=["GET"])
 def download(task):
     zipfile = make_zipfile(task)
 
     if not zipfile:
-        return jsonify({ "status": "error", "message": f"Invalid zip file" }), 400
+        return jsonify({ "status": "error", "message": "Invalid zip file" }), 400
     
     file_wrapper = FileWrapper(zipfile)
 
@@ -149,6 +199,6 @@ def download(task):
     )
 
 def run_backend():
-    os.makedirs("downloads", exist_ok=True)
+    os.makedirs("/downloads", exist_ok=True)
 
-    app.run(host='0.0.0.0', port=6969)
+    app.run(host="0.0.0.0", port=6969)

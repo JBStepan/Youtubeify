@@ -1,0 +1,22 @@
+version: "3"
+
+services:
+  mongodb:
+    image: mongo
+    container_name: mongodb
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+
+  # We want to make sure the database is loaded before
+  youtubeify:
+    image: jbstepan/youtubeify
+    container_name: youtubeify
+    ports:
+      - 8080:8080
+      - 6969:6969
+    volumes:
+      - "/some/path:/downloads" # The base downloads folder
+    environment:
+      - MONGODB_CONNECTION=mongodb://root:example@mongodb:27017/
