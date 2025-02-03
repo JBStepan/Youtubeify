@@ -1,9 +1,4 @@
 # Youtubify
 
-A Discord bot driven YT-DLP Downloader
+A mass Youtube Music downloader with Python and YT-DLP
 
-## Todo
-
-- [X] Implement backend REST server
-- [ ] Discord bot
-- [ ] Flask Powered frontend
