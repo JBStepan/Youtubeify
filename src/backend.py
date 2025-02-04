@@ -12,6 +12,8 @@ from data import get_db
 from datetime import datetime
 from bson import json_util
 from json import loads
+from werkzeug.middleware.proxy_fix import ProxyFix
+
 
 load_dotenv()
 DB = get_db("backend")
@@ -118,6 +120,9 @@ def make_zipfile(taskid, download_path = "downloads"):
 ## Backend server communcation
 app = Flask(__name__)
 
+if os.getenv("BEHIND_PROXY", "false").lower() == "true":
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_host=1)
+
 @app.route('/add_download', methods=["POST"])
 def add_task():
     data = request.get_json()
@@ -197,8 +202,3 @@ def download(task):
         direct_passthrough=True,
         headers={'Content-Disposition': f'attachment; filename="{task}.zip"'}
     )
-
-def run_backend():
-    os.makedirs("/downloads", exist_ok=True)
-
-    app.run(host="0.0.0.0", port=6969)
